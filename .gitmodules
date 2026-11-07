@@ -1,0 +1,3 @@
+[submodule "src/Flama.Audio.Engine.Kokoro/G2P"]
+	path = src/Flama.Audio.Engine.Kokoro/G2P
+	url = https://github.com/TrinhChung/flama-g2p

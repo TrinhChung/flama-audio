@@ -1,0 +1,44 @@
+name: Flama Audio CI
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  pull_request:
+    branches:
+      - master
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flama-audio-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore
+        run: |
+          dotnet restore Flama.Audio.sln
+          dotnet restore src/Flama.Audio.Engine.Kokoro/G2P/Flama.G2P.sln
+
+      - name: Test
+        run: |
+          dotnet test Flama.Audio.sln -c Release --no-restore
+          dotnet test src/Flama.Audio.Engine.Kokoro/G2P/Flama.G2P.sln -c Release --no-restore
