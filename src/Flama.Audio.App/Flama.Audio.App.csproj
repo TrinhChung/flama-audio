@@ -27,6 +27,9 @@
     <Description>FlamaAudio</Description>
     <Company>Flama</Company>
     <Copyright>Copyright © Flama</Copyright>
+    <Version>1.1.0</Version>
+    <AssemblyVersion>1.1.0.0</AssemblyVersion>
+    <FileVersion>1.1.0.0</FileVersion>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">

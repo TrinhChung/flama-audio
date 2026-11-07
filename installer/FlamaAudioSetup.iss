@@ -2,9 +2,9 @@
 ; Compiles Flama.Audio.App into a clean Windows Setup Wizard (FlamaAudio-Setup.exe)
 
 #define MyAppName "Flama Audio"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "Flama Team"
-#define MyAppURL "https://github.com/TrinhChung/Flama"
+#define MyAppURL "https://github.com/TrinhChung/flama-audio"
 #define MyAppExeName "Flama.Audio.App.exe"
 
 [Setup]
