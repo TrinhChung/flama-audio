@@ -13,7 +13,7 @@ on:
         type: string
 
 concurrency:
-  group: flama-audio-production-${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+  group: flama-audio-production
   cancel-in-progress: false
 
 permissions:
@@ -27,7 +27,7 @@ jobs:
 
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
-      PRODUCTION_DOWNLOAD_URL: ${{ vars.FLAMA_AUDIO_PRODUCTION_DOWNLOAD_URL || 'https://api.flama.vn/api/download/flama-audio' }}
+      PRODUCTION_DOWNLOAD_URL: ${{ vars.FLAMA_AUDIO_PRODUCTION_DOWNLOAD_URL }}
       WINDOWS_SIGNING_TIMESTAMP_URL: ${{ vars.WINDOWS_SIGNING_TIMESTAMP_URL || 'http://timestamp.digicert.com' }}
 
     steps:
@@ -123,6 +123,9 @@ jobs:
             throw "Unexpected LegalCopyright: $($versionInfo.LegalCopyright)"
           }
 
+          $initialHash = (Get-FileHash -LiteralPath $releasePath -Algorithm SHA256).Hash
+          "SIGNED_EXE_SHA256=$initialHash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Sign final EXE with Authenticode
         shell: pwsh
         env:
@@ -130,9 +133,16 @@ jobs:
           WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
           WINDOWS_SIGNING_CERTIFICATE_THUMBPRINT: ${{ vars.WINDOWS_SIGNING_CERTIFICATE_THUMBPRINT }}
         run: |
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERTIFICATE_BASE64)) {
+            Write-Host "Skipping Authenticode signing because WINDOWS_SIGNING_CERTIFICATE_BASE64 is not configured."
+            "AUTHENTICODE_SIGNED=false" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            exit 0
+          }
+
           & "scripts/Sign-WindowsRelease.ps1" `
             -FilePath "publish/release/FlamaAudio-Portable.exe" `
             -TimestampUrl $env:WINDOWS_SIGNING_TIMESTAMP_URL
+          "AUTHENTICODE_SIGNED=true" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Verify signed EXE and record identity
         shell: pwsh
@@ -140,6 +150,18 @@ jobs:
           WINDOWS_SIGNING_CERTIFICATE_THUMBPRINT: ${{ vars.WINDOWS_SIGNING_CERTIFICATE_THUMBPRINT }}
         run: |
           $releasePath = "publish/release/FlamaAudio-Portable.exe"
+          $signedHash = (Get-FileHash -LiteralPath $releasePath -Algorithm SHA256).Hash
+          "SIGNED_EXE_SHA256=$signedHash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          if ($env:AUTHENTICODE_SIGNED -ne "true") {
+            @"
+            ### FlamaAudio portable release identity
+            - Authenticode signing: ``skipped (no certificate configured)``
+            - Portable EXE SHA-256: ``$signedHash``
+            "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+            exit 0
+          }
+
           & "scripts/Test-WindowsRelease.ps1" `
             -FilePath $releasePath `
             -ExpectedThumbprint $env:WINDOWS_SIGNING_CERTIFICATE_THUMBPRINT
@@ -149,8 +171,6 @@ jobs:
             throw "Release signature is not Valid."
           }
 
-          $signedHash = (Get-FileHash -LiteralPath $releasePath -Algorithm SHA256).Hash
-          "SIGNED_EXE_SHA256=$signedHash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           @"
           ### FlamaAudio Authenticode identity
           - Status: ``$($signature.Status)``
@@ -186,10 +206,6 @@ jobs:
 
           - ``FlamaAudio-Portable.exe``: ``$currentExeHash``
           - ``FlamaAudio-Portable-win-x64.zip``: ``$zipHash``
-
-          The EXE is Authenticode-signed and RFC 3161 timestamped. A newly signed
-          binary can still show a SmartScreen reputation warning while publisher
-          and file-hash reputation accumulate.
           "@ | Set-Content -LiteralPath (Join-Path $releaseDirectory "RELEASE_NOTES.md") -Encoding utf8
 
       - name: Extract package and verify embedded signed EXE
@@ -212,9 +228,11 @@ jobs:
             throw "Packaged EXE hash does not match the signed EXE."
           }
 
-          & "scripts/Test-WindowsRelease.ps1" `
-            -FilePath $extractedExe `
-            -ExpectedThumbprint $env:WINDOWS_SIGNING_CERTIFICATE_THUMBPRINT
+          if ($env:AUTHENTICODE_SIGNED -eq "true") {
+            & "scripts/Test-WindowsRelease.ps1" `
+              -FilePath $extractedExe `
+              -ExpectedThumbprint $env:WINDOWS_SIGNING_CERTIFICATE_THUMBPRINT
+          }
 
       - name: Publish GitHub Release
         shell: pwsh
@@ -262,9 +280,11 @@ jobs:
           if ($downloadedHash -ne $env:SIGNED_EXE_SHA256) {
             throw "GitHub Release EXE differs from the signed release artifact."
           }
-          & "scripts/Test-WindowsRelease.ps1" `
-            -FilePath $downloadedExe `
-            -ExpectedThumbprint $env:WINDOWS_SIGNING_CERTIFICATE_THUMBPRINT
+          if ($env:AUTHENTICODE_SIGNED -eq "true") {
+            & "scripts/Test-WindowsRelease.ps1" `
+              -FilePath $downloadedExe `
+              -ExpectedThumbprint $env:WINDOWS_SIGNING_CERTIFICATE_THUMBPRINT
+          }
 
       - name: Deploy signed EXE and checksum to Flama download server
         shell: pwsh
@@ -323,9 +343,15 @@ jobs:
               'trap cleanup EXIT',
               'cd "$stage_directory"',
               'sha256sum -c FlamaAudio-Portable.exe.sha256',
-              'install -d -m 755 -o flama -g flama /var/lib/flama/downloads',
-              'install -m 644 -o flama -g flama FlamaAudio-Portable.exe /var/lib/flama/downloads/FlamaAudio-Portable.exe.new',
-              'install -m 644 -o flama -g flama FlamaAudio-Portable.exe.sha256 /var/lib/flama/downloads/FlamaAudio-Portable.exe.sha256.new',
+              'if id -u flama >/dev/null 2>&1; then',
+              '  install -d -m 755 -o flama -g flama /var/lib/flama/downloads',
+              '  install -m 644 -o flama -g flama FlamaAudio-Portable.exe /var/lib/flama/downloads/FlamaAudio-Portable.exe.new',
+              '  install -m 644 -o flama -g flama FlamaAudio-Portable.exe.sha256 /var/lib/flama/downloads/FlamaAudio-Portable.exe.sha256.new',
+              'else',
+              '  install -d -m 755 /var/lib/flama/downloads',
+              '  install -m 644 FlamaAudio-Portable.exe /var/lib/flama/downloads/FlamaAudio-Portable.exe.new',
+              '  install -m 644 FlamaAudio-Portable.exe.sha256 /var/lib/flama/downloads/FlamaAudio-Portable.exe.sha256.new',
+              'fi',
               'actual_hash="$(sha256sum /var/lib/flama/downloads/FlamaAudio-Portable.exe.new | awk ''{print toupper($1)}'')"',
               'test "$actual_hash" = "$expected_hash"',
               'mv -f /var/lib/flama/downloads/FlamaAudio-Portable.exe.new /var/lib/flama/downloads/FlamaAudio-Portable.exe',
@@ -341,6 +367,7 @@ jobs:
           }
 
       - name: Verify production download bytes and Authenticode
+        if: env.PRODUCTION_DOWNLOAD_URL != ''
         shell: pwsh
         env:
           WINDOWS_SIGNING_CERTIFICATE_THUMBPRINT: ${{ vars.WINDOWS_SIGNING_CERTIFICATE_THUMBPRINT }}
@@ -379,9 +406,11 @@ jobs:
             throw "Production download has an unexpected Content-Disposition filename."
           }
 
-          & "scripts/Test-WindowsRelease.ps1" `
-            -FilePath $downloadedExe `
-            -ExpectedThumbprint $env:WINDOWS_SIGNING_CERTIFICATE_THUMBPRINT
+          if ($env:AUTHENTICODE_SIGNED -eq "true") {
+            & "scripts/Test-WindowsRelease.ps1" `
+              -FilePath $downloadedExe `
+              -ExpectedThumbprint $env:WINDOWS_SIGNING_CERTIFICATE_THUMBPRINT
+          }
 
           $downloadedChecksumPath = Join-Path $env:RUNNER_TEMP "FlamaAudio-Production-Verify.exe.sha256"
           curl.exe --fail --silent --show-error --location --max-redirs 0 `
