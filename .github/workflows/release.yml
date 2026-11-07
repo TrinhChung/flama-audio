@@ -154,11 +154,11 @@ jobs:
           "SIGNED_EXE_SHA256=$signedHash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
           if ($env:AUTHENTICODE_SIGNED -ne "true") {
-            @"
-            ### FlamaAudio portable release identity
-            - Authenticode signing: ``skipped (no certificate configured)``
-            - Portable EXE SHA-256: ``$signedHash``
-            "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+            @(
+              "### FlamaAudio portable release identity",
+              "- Authenticode signing: ``skipped (no certificate configured)``",
+              "- Portable EXE SHA-256: ``$signedHash``"
+            ) -join "`n" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
             exit 0
           }
 
