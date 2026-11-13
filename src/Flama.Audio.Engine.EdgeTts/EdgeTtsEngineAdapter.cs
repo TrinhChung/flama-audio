@@ -26,13 +26,13 @@ public class EdgeTtsEngineAdapter : ITtsEngineAdapter, IDisposable
     private EngineHealth _lastHealth = new("ready", EdgeTtsConstants.ChromiumFullVersion, "Microsoft Edge TTS Online Engine ready");
     private readonly TimeSpan _healthTtl = TimeSpan.FromSeconds(30);
     private readonly SemaphoreSlim _healthLock = new(1, 1);
-    private readonly SemaphoreSlim _connectLock = new(1, 1);
     private readonly SemaphoreSlim _synthesisGate = new(1, 1);
     private readonly Queue<DateTimeOffset> _requestTimestamps = new();
     private DateTimeOffset _lastRequestCompletedTime = DateTimeOffset.MinValue;
     private readonly object _rateLimiterLock = new();
     private readonly int _minDelayMs;
     private readonly int _maxRequestsPerMinute;
+    private readonly TimeSpan _rateWindow;
     private bool _disposed;
 
     public EdgeTtsEngineAdapter(
@@ -40,13 +40,15 @@ public class EdgeTtsEngineAdapter : ITtsEngineAdapter, IDisposable
         EdgeTtsVoiceCatalog? voiceCatalog = null,
         ILogger<EdgeTtsEngineAdapter>? logger = null,
         int minDelayMs = EdgeTtsConstants.MinInterRequestDelayMs,
-        int maxRequestsPerMinute = EdgeTtsConstants.MaxRequestsPerMinute)
+        int maxRequestsPerMinute = EdgeTtsConstants.MaxRequestsPerMinute,
+        TimeSpan? rateWindow = null)
     {
         _client = client ?? new EdgeWebSocketClient();
         _voiceCatalog = voiceCatalog ?? new EdgeTtsVoiceCatalog();
         _logger = logger;
         _minDelayMs = minDelayMs;
         _maxRequestsPerMinute = maxRequestsPerMinute;
+        _rateWindow = rateWindow ?? TimeSpan.FromSeconds(60);
     }
 
     public async Task<EngineHealth> GetHealthAsync(CancellationToken ct = default)
@@ -167,30 +169,29 @@ public class EdgeTtsEngineAdapter : ITtsEngineAdapter, IDisposable
                     ? cleaned
                     : Guid.NewGuid().ToString("N"));
 
+            // Microsoft drops an idle Read Aloud socket with a TCP reset and no close frame
+            // (observed after ~8-35 s), so a socket kept between requests is usually dead by
+            // the next click. Each synthesis therefore opens its own connection and closes it,
+            // the same way Edge's Read Aloud and the edge-tts reference client do.
             byte[] audioBytes = Array.Empty<byte>();
             const int maxRetries = 2;
             for (int attempt = 0; attempt <= maxRetries; attempt++)
             {
                 try
                 {
-                    await EnsureConnectedAsync(ct);
+                    await OpenConnectionAsync(ct);
                     string currentWsRequestId = attempt == 0 ? wsRequestId : Guid.NewGuid().ToString("N");
                     audioBytes = await _client.SynthesizeSsmlAsync(currentWsRequestId, ssml, ct);
                     break;
                 }
                 catch (Exception ex) when (attempt < maxRetries && ex is WebSocketException or InvalidOperationException or IOException)
                 {
-                    _logger?.LogWarning(ex, "Edge TTS synthesis encountered disconnected socket (attempt {Attempt}/{MaxRetries}), reconnecting with fresh request ID", attempt + 1, maxRetries);
-                    await _connectLock.WaitAsync(ct);
-                    try
-                    {
-                        await ReconnectAsync(ct);
-                    }
-                    finally
-                    {
-                        _connectLock.Release();
-                    }
-                    await Task.Delay(150, ct);
+                    _logger?.LogWarning(ex, "Edge TTS synthesis failed on a fresh connection (attempt {Attempt}/{MaxRetries}), retrying", attempt + 1, maxRetries);
+                    await Task.Delay(150 * (attempt + 1), ct);
+                }
+                finally
+                {
+                    await CloseConnectionQuietlyAsync();
                 }
             }
 
@@ -229,27 +230,23 @@ public class EdgeTtsEngineAdapter : ITtsEngineAdapter, IDisposable
                 }
             }
 
-            // 2. Clean up timestamps older than 60 seconds
-            while (_requestTimestamps.Count > 0 && (now - _requestTimestamps.Peek()) > TimeSpan.FromSeconds(60))
+            // 2. Clean up timestamps that left the sliding window
+            while (_requestTimestamps.Count > 0 && (now - _requestTimestamps.Peek()) > _rateWindow)
             {
                 _requestTimestamps.Dequeue();
             }
 
-            // 3. Sliding window check
+            // 3. Sliding window check. A full window means waiting for its oldest request to
+            // expire (at most one window). Waiting instead of rejecting keeps a deck batch
+            // moving at the allowed pace; the caller's cancellation token still ends the wait.
             if (_maxRequestsPerMinute > 0 && _requestTimestamps.Count >= _maxRequestsPerMinute)
             {
                 var oldestInWindow = _requestTimestamps.Peek();
-                var windowDelay = TimeSpan.FromSeconds(60) - (now - oldestInWindow);
+                var windowDelay = _rateWindow - (now - oldestInWindow);
                 if (windowDelay > delayNeeded)
                 {
                     delayNeeded = windowDelay;
                 }
-            }
-
-            if (delayNeeded > TimeSpan.FromMilliseconds(EdgeTtsConstants.MaxThrottleWaitMs))
-            {
-                throw new InvalidOperationException(
-                    $"Edge TTS rate limit exceeded ({_maxRequestsPerMinute} requests/minute limit to prevent Microsoft IP ban). Please wait before trying again.");
             }
         }
 
@@ -265,30 +262,21 @@ public class EdgeTtsEngineAdapter : ITtsEngineAdapter, IDisposable
         }
     }
 
-    private async Task EnsureConnectedAsync(CancellationToken ct)
+    private async Task CloseConnectionQuietlyAsync()
     {
-        if (_client.IsConnected) return;
-
-        await _connectLock.WaitAsync(ct);
         try
         {
-            if (_client.IsConnected) return;
-            await ReconnectAsync(ct);
+            // Not tied to the request token: a cancelled request must still release its socket.
+            await _client.CloseAsync(CancellationToken.None);
         }
-        finally
+        catch (Exception ex)
         {
-            _connectLock.Release();
+            _logger?.LogDebug(ex, "Ignoring error while closing Edge TTS connection");
         }
     }
 
-    private async Task ReconnectAsync(CancellationToken ct)
+    private async Task OpenConnectionAsync(CancellationToken ct)
     {
-        try
-        {
-            await _client.CloseAsync(ct);
-        }
-        catch { }
-
         string connectionId = Guid.NewGuid().ToString("N");
         string secMsGec = EdgeTtsDrm.GenerateSecMsGecV2();
 
@@ -351,7 +339,6 @@ public class EdgeTtsEngineAdapter : ITtsEngineAdapter, IDisposable
 
         _client.Dispose();
         _healthLock.Dispose();
-        _connectLock.Dispose();
         _synthesisGate.Dispose();
         GC.SuppressFinalize(this);
     }
