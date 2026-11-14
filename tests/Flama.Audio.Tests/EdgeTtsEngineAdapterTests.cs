@@ -211,11 +211,12 @@ public class EdgeTtsEngineAdapterTests
     }
 
     [Fact]
-    public async Task RateLimiter_SlidingWindowExceeded_ThrowsInvalidOperationException()
+    public async Task RateLimiter_SlidingWindowExceeded_WaitsForWindowInsteadOfFailing()
     {
         var mockWs = new MockEdgeWebSocketClient();
-        // Configure max 2 requests per minute with 0ms pacing
-        using var adapter = new EdgeTtsEngineAdapter(mockWs, minDelayMs: 0, maxRequestsPerMinute: 2);
+        // Max 2 requests per 1-second window with 0ms pacing
+        using var adapter = new EdgeTtsEngineAdapter(
+            mockWs, minDelayMs: 0, maxRequestsPerMinute: 2, rateWindow: TimeSpan.FromSeconds(1));
 
         var req = new TtsRequest(
             RequestId: "req-limit",
@@ -225,13 +226,55 @@ public class EdgeTtsEngineAdapterTests
             Text: "テスト"
         );
 
-        // Req 1 and 2 succeed
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         await adapter.SynthesizeAsync(req);
+        await adapter.SynthesizeAsync(req);
+        var third = await adapter.SynthesizeAsync(req);
+        sw.Stop();
+
+        // The third request waits for the oldest one to leave the window, then succeeds.
+        Assert.NotEmpty(third.AudioData);
+        Assert.True(sw.ElapsedMilliseconds >= 900, $"Elapsed was {sw.ElapsedMilliseconds}ms, expected the window wait");
+    }
+
+    [Fact]
+    public async Task RateLimiter_WaitIsCancelledWithTheRequest()
+    {
+        var mockWs = new MockEdgeWebSocketClient();
+        using var adapter = new EdgeTtsEngineAdapter(
+            mockWs, minDelayMs: 0, maxRequestsPerMinute: 1, rateWindow: TimeSpan.FromSeconds(30));
+
+        var req = new TtsRequest(
+            RequestId: "req-cancel",
+            EngineId: "edge-tts",
+            Language: "ja-JP",
+            VoiceId: "ja-JP-NanamiNeural",
+            Text: "テスト"
+        );
+
+        await adapter.SynthesizeAsync(req);
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => adapter.SynthesizeAsync(req, cts.Token));
+    }
+
+    [Fact]
+    public async Task SynthesizeAsync_OpensAndClosesItsOwnConnection()
+    {
+        var mockWs = new MockEdgeWebSocketClient();
+        using var adapter = new EdgeTtsEngineAdapter(mockWs, minDelayMs: 0);
+
+        var req = new TtsRequest(
+            RequestId: "req-own-connection",
+            EngineId: "edge-tts",
+            Language: "ja-JP",
+            VoiceId: "ja-JP-NanamiNeural",
+            Text: "テスト"
+        );
+
         await adapter.SynthesizeAsync(req);
 
-        // Req 3 would have to wait 60 seconds (which exceeds MaxThrottleWaitMs = 15s), so it throws
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => adapter.SynthesizeAsync(req));
-        Assert.Contains("rate limit exceeded", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(mockWs.CloseCalled);
+        Assert.False(mockWs.IsConnected);
     }
 
     private class MockEdgeWebSocketClient : IEdgeWebSocketClient

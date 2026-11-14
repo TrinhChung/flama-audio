@@ -24,6 +24,5 @@ public static class EdgeTtsConstants
 
     // Rate Limiting & Anti-Abuse Protection
     public const int MinInterRequestDelayMs = 300;     // Minimum pause between consecutive requests (pacing)
-    public const int MaxRequestsPerMinute = 50;         // Max requests allowed in a 60-second sliding window
-    public const int MaxThrottleWaitMs = 15000;         // Max time to wait for rate window before rejecting (15s)
+    public const int MaxRequestsPerMinute = 50;         // Max requests allowed in a 60-second sliding window; extra requests wait
 }

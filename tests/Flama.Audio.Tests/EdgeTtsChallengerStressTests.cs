@@ -275,10 +275,12 @@ public class EdgeTtsChallengerStressTests : IDisposable
     }
 
     [Fact]
-    public async Task Adapter_RapidConsecutiveTurns_MaintainsOpenConnection()
+    public async Task Adapter_ConsecutiveTurns_EachUseAFreshConnection()
     {
+        // Microsoft resets idle Read Aloud sockets without a close frame, so a socket kept
+        // between turns fails on the next write. Every turn must connect, configure and close.
         var mockWs = new ControlledMockWebSocketClient();
-        using var adapter = new EdgeTtsEngineAdapter(mockWs);
+        using var adapter = new EdgeTtsEngineAdapter(mockWs, minDelayMs: 0);
 
         const int turns = 20;
         for (int i = 0; i < turns; i++)
@@ -296,10 +298,34 @@ public class EdgeTtsChallengerStressTests : IDisposable
             Assert.True(res.AudioData.Length > 0);
         }
 
-        // Connection should only have been established ONCE and reused for all 20 turns
-        Assert.Equal(1, mockWs.ConnectCallCount);
-        Assert.Equal(1, mockWs.SendConfigCallCount);
+        Assert.Equal(turns, mockWs.ConnectCallCount);
+        Assert.Equal(turns, mockWs.SendConfigCallCount);
         Assert.Equal(turns, mockWs.SynthesizeCallCount);
+        Assert.Equal(turns, mockWs.CloseCallCount);
+        Assert.False(mockWs.IsConnected);
+    }
+
+    [Fact]
+    public async Task Adapter_ServerResetAfterIdle_NextTurnStillSucceedsOnFirstAttempt()
+    {
+        // Reproduces the app-UI failure: the server silently drops the socket while idle.
+        var mockWs = new IdleResetMockWebSocketClient();
+        using var adapter = new EdgeTtsEngineAdapter(mockWs, minDelayMs: 0);
+
+        TtsRequest Req(string id) => new(
+            RequestId: id,
+            EngineId: "edge-tts",
+            Language: "ja-JP",
+            VoiceId: "ja-JP-NanamiNeural",
+            Text: "アイドル後のテスト"
+        );
+
+        await adapter.SynthesizeAsync(Req("before-idle"));
+        mockWs.ServerDropsOpenSockets();
+        await adapter.SynthesizeAsync(Req("after-idle"));
+
+        Assert.Equal(0, mockWs.ResetFailures);
+        Assert.Equal(2, mockWs.SynthesizeCallCount);
     }
 
     [Fact]
@@ -672,11 +698,14 @@ public class EdgeTtsChallengerStressTests : IDisposable
             }
         }
 
+        public int CloseCallCount { get; private set; }
+
         public async Task CloseAsync(CancellationToken ct)
         {
             await _lock.WaitAsync(ct);
             try
             {
+                CloseCallCount++;
                 IsConnected = false;
             }
             finally
@@ -690,6 +719,52 @@ public class EdgeTtsChallengerStressTests : IDisposable
             IsConnected = false;
             _lock.Dispose();
         }
+    }
+
+    private class IdleResetMockWebSocketClient : IEdgeWebSocketClient
+    {
+        private bool _socketOpen;
+        private bool _socketResetByServer;
+
+        // Like ClientWebSocket, the local state still says Open after a silent server reset.
+        public bool IsConnected => _socketOpen;
+        public int SynthesizeCallCount { get; private set; }
+        public int ResetFailures { get; private set; }
+
+        public void ServerDropsOpenSockets()
+        {
+            if (_socketOpen) _socketResetByServer = true;
+        }
+
+        public Task ConnectAsync(Uri uri, IDictionary<string, string> headers, CancellationToken ct)
+        {
+            _socketOpen = true;
+            _socketResetByServer = false;
+            return Task.CompletedTask;
+        }
+
+        public Task SendConfigAsync(string outputFormat, CancellationToken ct) => Task.CompletedTask;
+
+        public Task<byte[]> SynthesizeSsmlAsync(string requestId, string ssml, CancellationToken ct)
+        {
+            SynthesizeCallCount++;
+            if (!_socketOpen) throw new InvalidOperationException("WebSocket is not connected.");
+            if (_socketResetByServer)
+            {
+                ResetFailures++;
+                throw new WebSocketException("The remote party closed the WebSocket connection without completing the close handshake.");
+            }
+            return Task.FromResult(new byte[] { 0xFF, 0xFB, 0x90, 0x64 });
+        }
+
+        public Task CloseAsync(CancellationToken ct)
+        {
+            _socketOpen = false;
+            _socketResetByServer = false;
+            return Task.CompletedTask;
+        }
+
+        public void Dispose() => _socketOpen = false;
     }
 
     private class DisconnectingMockWebSocketClient : IEdgeWebSocketClient
