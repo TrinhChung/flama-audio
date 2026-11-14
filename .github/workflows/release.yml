@@ -196,8 +196,10 @@ jobs:
 
           Compress-Archive -LiteralPath $exePath -DestinationPath $zipPath -CompressionLevel Optimal
           $zipHash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash
-          Set-Content -LiteralPath $exeChecksumPath -Encoding ascii -Value "$currentExeHash *FlamaAudio-Portable.exe"
-          Set-Content -LiteralPath $zipChecksumPath -Encoding ascii -Value "$zipHash *FlamaAudio-Portable-win-x64.zip"
+          # LF line endings: Set-Content on Windows writes CRLF, which `sha256sum -c` in
+          # coreutils < 9 (Ubuntu 22.04, the download server) rejects as a missing "file\r".
+          [IO.File]::WriteAllText((Join-Path (Get-Location) $exeChecksumPath), "$currentExeHash *FlamaAudio-Portable.exe`n", [Text.Encoding]::ASCII)
+          [IO.File]::WriteAllText((Join-Path (Get-Location) $zipChecksumPath), "$zipHash *FlamaAudio-Portable-win-x64.zip`n", [Text.Encoding]::ASCII)
 
           @"
           FlamaAudio portable Windows x64 release.
