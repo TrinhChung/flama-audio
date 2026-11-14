@@ -38,6 +38,8 @@ Source: "..\publish\singlefile\Flama.Audio.App.exe"; DestDir: "{app}"; Flags: ig
 Source: "..\src\Flama.Audio.Engine.Kokoro\G2P\LICENSE"; DestDir: "{app}\licenses"; DestName: "FLAMA_G2P_LICENSE.txt"; Flags: ignoreversion
 Source: "..\src\Flama.Audio.Engine.Kokoro\G2P\COMMERCIAL_LICENSE.md"; DestDir: "{app}\licenses"; DestName: "FLAMA_G2P_COMMERCIAL_LICENSE.txt"; Flags: ignoreversion
 Source: "..\THIRD_PARTY_NOTICES.md"; DestDir: "{app}\licenses"; DestName: "THIRD_PARTY_NOTICES.txt"; Flags: ignoreversion
+Source: "..\src\Flama.Audio.Engine.Kokoro\G2P\THIRD_PARTY_NOTICES.md"; DestDir: "{app}\licenses"; DestName: "FLAMA_G2P_THIRD_PARTY_NOTICES.txt"; Flags: ignoreversion
+Source: "..\src\Flama.Audio.Engine.Kokoro\G2P\licenses\Apache-2.0.txt"; DestDir: "{app}\licenses"; DestName: "APACHE-2.0.txt"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
