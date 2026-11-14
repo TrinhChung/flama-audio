@@ -498,7 +498,7 @@
 
         <!-- Footer -->
         <Grid Grid.Row="5" Margin="0,14,0,0">
-            <TextBlock Text="Flama Audio v1.1.0 • Multi-Engine Supervisor • .NET 8 LTS" FontSize="11" Foreground="#6B625C" HorizontalAlignment="Center"/>
+            <TextBlock Text="Flama Audio v1.2.0 • Multi-Engine Supervisor • .NET 8 LTS" FontSize="11" Foreground="#6B625C" HorizontalAlignment="Center"/>
         </Grid>
     </Grid>
 </Window>

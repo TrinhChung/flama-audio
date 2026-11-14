@@ -168,7 +168,7 @@ public partial class MainWindow : Window
     private void OnAboutClicked(object sender, RoutedEventArgs e)
     {
         MessageBox.Show(
-            "Flama Audio Local Service v1.1.0\n\n" +
+            "Flama Audio Local Service v1.2.0\n\n" +
             "Trợ lý tổng hợp phát âm đa ngôn ngữ cho hệ sinh thái Flama.\n" +
             "• Tiếng Nhật: VOICEVOX Engine (Port 50021)\n" +
             "• Tiếng Anh & Trung: Kokoro-82M Neural Engine (C# Native + ONNX Runtime CPU)\n" +
