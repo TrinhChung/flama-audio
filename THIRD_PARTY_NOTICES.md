@@ -65,3 +65,18 @@ This file contains licensing and source notices for third-party software, librar
 - **Status:** **`License/source requires verification before public distribution.`** (RELEASE BLOCKER)
 - **Recommendation:** 
   Before public production distribution, verify if the internal data derived from `pypinyin` allows commercial redistribution under its MIT license. If there is any ambiguity, replace or regenerate this dictionary from a fully open-source dataset with verified provenance (such as the Unicode Consortium Unihan database or CC-CEDICT).
+
+---
+
+## 7. misaki English lexicons (bundled in Flama.G2P)
+- **Source:** hexgrad/misaki (https://github.com/hexgrad/misaki), commit `fba1236595f2d2bf21d414ba6e57d25256afada3`
+- **Files:** `us_gold.json`, `us_silver.json`, `gb_gold.json`, `gb_silver.json`, embedded gzip-compressed in `Flama.G2P.dll`; the English G2P logic is ported from `misaki/en.py`.
+- **License:** Apache License 2.0 (http://www.apache.org/licenses/LICENSE-2.0). Copyright hexgrad and misaki contributors.
+- **Details:** See `src/Flama.Audio.Engine.Kokoro/G2P/THIRD_PARTY_NOTICES.md` for checksums and the list of changes.
+
+---
+
+## 8. g2p_en neural model (bundled in Flama.G2P)
+- **Source:** Kyubyong/g2p (https://github.com/Kyubyong/g2p), commit `c6439c274c42b9724a7fee1dc07ca6a4c68a0538`
+- **Files:** `checkpoint20.npz` (GRU weights), embedded unmodified in `Flama.G2P.dll`; inference is re-implemented in C#.
+- **License:** Apache License 2.0 (http://www.apache.org/licenses/LICENSE-2.0). Copyright Kyubyong Park and Jongseok Kim.

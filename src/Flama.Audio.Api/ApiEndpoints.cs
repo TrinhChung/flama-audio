@@ -31,7 +31,7 @@ public static class ApiEndpoints
             {
                 status = "ok",
                 app = "Flama Audio MVP",
-                version = "1.1.0",
+                version = "1.2.0",
                 port = 4791,
                 engines = engineStatuses
             });
@@ -69,7 +69,7 @@ public static class ApiEndpoints
                 var health = await adapter.GetHealthAsync();
                 list.Add(new EnginePackageState(
                     EngineId: adapter.EngineId,
-                    InstalledVersion: health.Version ?? "1.1.0",
+                    InstalledVersion: health.Version ?? "1.2.0",
                     Status: health.Status,
                     IsAvailable: health.Status == "ready"
                 ));

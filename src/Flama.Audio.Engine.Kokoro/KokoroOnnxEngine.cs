@@ -26,6 +26,7 @@ public class KokoroOnnxEngine : IDisposable
 
     private InferenceSession? _session;
     private EnglishG2P? _g2p;
+    private EnglishG2P? _g2pGb;
     private ChineseG2P? _chineseG2p;
     private KokoroTokenizer? _tokenizer;
     private VoiceManager? _voiceManager;
@@ -75,6 +76,7 @@ public class KokoroOnnxEngine : IDisposable
             // Initialize helper modules
             var cmuDict = new CmuDictionary(File.Exists(_cmuDictPath) ? _cmuDictPath : null);
             _g2p = new EnglishG2P(cmuDict);
+            _g2pGb = new EnglishG2P(cmuDict, british: true);
             _chineseG2p = new ChineseG2P(_g2p);
             _tokenizer = new KokoroTokenizer(File.Exists(_configPath) ? _configPath : null);
             _voiceManager = new VoiceManager(File.Exists(_voicesPath) ? _voicesPath : null);
@@ -171,8 +173,10 @@ public class KokoroOnnxEngine : IDisposable
         string trimmed = text.Trim();
         if (trimmed.Length <= maxChunkChars) return new List<string> { trimmed };
 
-        // 1. Split on sentence terminators: 。！？!?\n and English period followed by whitespace
-        string sentencePattern = @"(?<=[。！？!?\n])(?![。！？!?\n])\s*|(?<=\.)(?!\.)\s+";
+        // 1. Split on sentence terminators: 。！？!?\n and English period followed by whitespace,
+        //    except after titles, initials and dotted abbreviations ("Mr. Smith", "J. Smith", "e.g. this").
+        string sentencePattern =
+            @"(?<=[。！？!?\n])(?![。！？!?\n])\s*|(?<=\.)(?<!\b(?:Mr|Mrs|Ms|Dr|Prof|St|Mt|Jr|Sr|Gen|Capt|Sgt|vs|No|e\.g|i\.e|[A-Za-z])\.)(?!\.)\s+";
         var rawSentences = Regex.Split(trimmed, sentencePattern)
             .Select(s => s.Trim())
             .Where(s => !string.IsNullOrEmpty(s))
@@ -239,6 +243,12 @@ public class KokoroOnnxEngine : IDisposable
             (voiceId != null && voiceId.StartsWith("z", StringComparison.OrdinalIgnoreCase)))
         {
             return _chineseG2p!;
+        }
+        // British voices (bf_*, bm_*) were trained on misaki's British phoneme set.
+        if ((language != null && language.Equals("en-GB", StringComparison.OrdinalIgnoreCase)) ||
+            (voiceId != null && voiceId.StartsWith("b", StringComparison.OrdinalIgnoreCase)))
+        {
+            return _g2pGb ?? _g2p!;
         }
         return _g2p!;
     }
